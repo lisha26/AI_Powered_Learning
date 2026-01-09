@@ -1,5 +1,6 @@
 const { PythonShell } = require('python-shell');
 const geminiService = require('./geminiService');
+const { spawnSync } = require('child_process');
 
 async function generateManimScript(topic, type) {
     const prompt = `Write a Manim Python script to visualize "${topic}". 
@@ -12,29 +13,47 @@ exports.generateAnimation = async (topic, type) => {
     try {
         const script = await generateManimScript(topic, type);
 
-        // Here we would ideally save 'script' to a .py file and run it.
-        // For this prototype, we'll assume a script runner exists or just return the script for now 
-        // if python/manim isn't fully set up on the host.
-        // However, following the code structure:
+        // Check if Python is available to avoid crash
+        const pythonCheck = spawnSync('python', ['--version']);
+        if (pythonCheck.error) {
+            console.log("Python not found. Returning script only.");
+            return { script, status: "script_generated_only", message: "Python not found on server. Animation script generated but not rendered." };
+        }
 
         return new Promise((resolve, reject) => {
-            // Warning: 'generate_animation.py' needs to handle the logic. 
-            // If it doesn't exist, this will fail. 
-            // I'll assume for now we just want to run the python command.
-
             const options = {
                 args: [script, type]
             };
 
-            PythonShell.run('generate_animation.py', options, (err, results) => {
-                if (err) {
-                    console.warn("Python execution failed (Manim might not be installed):", err.message);
-                    // Fallback: return the script so frontend can display it or debug
-                    resolve({ script, status: "generated_only", error: err.message });
-                } else {
-                    resolve(results);
-                }
-            });
+            // Wrap in try-catch for synchronous failures in PythonShell
+            try {
+                const pyShell = new PythonShell('generate_animation.py', options);
+
+                // Collect results
+                let results = [];
+                pyShell.on('message', function (message) {
+                    results.push(message);
+                });
+
+                // Handle error specifically
+                pyShell.on('error', function (err) {
+                    console.warn("Python Shell handled error:", err.message);
+                    resolve({ script, status: "script_generated_only", error: err.message });
+                });
+
+                pyShell.end(function (err, code, signal) {
+                    if (err) {
+                        console.warn("Python Shell ended with error:", err.message);
+                        resolve({ script, status: "script_generated_only", error: err.message });
+                    } else {
+                        resolve(results);
+                    }
+                });
+
+            } catch (e) {
+                console.error("PythonShell Instantiation Error:", e);
+                resolve({ script, status: "script_generated_only", error: e.message });
+            }
         });
     } catch (error) {
         throw error;
